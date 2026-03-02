@@ -1,0 +1,25 @@
+{
+  "name": "register-page",
+  "version": "1.0.0",
+  "description": "Vous avez besoin de [Node.JS](https://nodejs.org) (testé avec la version v24.11.1).",
+  "main": "server.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node server.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Nathan94600/register-page.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/Nathan94600/register-page/issues"
+  },
+  "homepage": "https://github.com/Nathan94600/register-page#readme",
+  "dependencies": {
+    "jsonwebtoken": "^9.0.3"
+  }
+}

@@ -2,7 +2,9 @@ const {createServer} = require("http"),
   {readFileSync} = require("fs"),
   {DatabaseSync} = require("node:sqlite"),
   db = new DatabaseSync(":memory:"),
-  {argon2Sync, randomBytes} = require("crypto");
+  {argon2Sync, randomBytes} = require("crypto"),
+  {sign}=require("jsonwebtoken"),
+  jwtSecret = randomBytes(16).toString("hex");
 
 
 // Avec MYSQL :
@@ -130,7 +132,15 @@ createServer((req, res) => {
             try {
               createUserReq.run(email, hash);
 
-              return res.writeHead(200, { "content-type": "text/plain; charset=utf8" }).end("Compte créé")
+              try {
+                return res
+                  .writeHead(200, { "content-type": "text/plain; charset=utf8" })
+                  .end(sign({email}, jwtSecret, {expiresIn: "1h", algorithm: "HS512"}))
+              } catch (error) {
+                console.error(error);
+        
+                return res.writeHead(500, { "content-type": "text/plain; charset=utf8" }).end("Erreur lors de la génération du JWT")             
+              }
             } catch (error) {
               console.error(error);
         
@@ -147,6 +157,8 @@ createServer((req, res) => {
       break;
     case "/connexion":
       if (req.method === "POST") req.on("data", chunk => data += chunk).on("end", () => {
+        console.log("DATA", data);
+        
         const params = new URLSearchParams(data), email = params.get("email"), password = params.get("password");
 
         if (!email || !password)
@@ -159,9 +171,19 @@ createServer((req, res) => {
 
         verifyPassword(password, user.password)
           .then(equal => {
-            res
-              .writeHead(200, { "content-type": "text/plain; charset=utf8" })
-              .end(equal ? "Vous êtes connecter" : "Identifiants invalides")
+            if (equal) {
+              try {
+                return res
+                  .writeHead(200, { "content-type": "text/plain; charset=utf8" })
+                  .end(sign({email}, jwtSecret, {expiresIn: "1h", algorithm: "HS512"}))
+              } catch (error) {
+                console.error(error);
+        
+                return res.writeHead(500, { "content-type": "text/plain; charset=utf8" }).end("Erreur lors de la génération du JWT")             
+              }
+            } else res
+              .writeHead(400, { "content-type": "text/plain; charset=utf8" })
+              .end("Identifiants invalides")
           })
           .catch(reason => {
             console.error(reason);
