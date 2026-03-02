@@ -35,7 +35,8 @@ const createUserReq = db.prepare("INSERT INTO users (email, password) VALUES (?,
     "motdepasse",
     "password",
     "unsupermotdepasse"
-  ].map(pwd => pwd.toLowerCase());
+  ].map(pwd => pwd.toLowerCase()),
+  argon2Params = {parallelism: 2, tagLength: 64, memory: 65536, passes: 3};
 
 /**
  * @param {string} password 
@@ -63,24 +64,23 @@ function checkPasswordCNIL(password) {
 /**
  * Renvoi le hash d'un mot de passe avec les paramètres utilisés
  * @param {string} password 
- * @param {Omit<import.Argon2Parameters, "message" | "nonce">} parameters 
+ * @param {string} nonce 
  * @returns {Promise<string>}
  */
-function hashPassword(password, parameters) {
+function hashPassword(password, nonce=randomBytes(16).toString("hex")) {
   return new Promise((resolve, reject) => {
-    const nonce = randomBytes(16),
-      algorithm = "argon2id";
+    const algorithm = "argon2id";
 
     try {
       const hash = argon2Sync(algorithm, {
-        ...parameters,
+        ...argon2Params,
         nonce,
         message: password,
       }).toString("hex");
 
       resolve(
-        `algo=${algorithm}$nonce=${nonce.toString("hex")}$${Object.entries(
-          parameters,
+        `algo=${algorithm}$nonce=${nonce}$${Object.entries(
+          argon2Params,
         )
           .map(([k, v]) => `${k}=${v}$`)
           .join("")}hash=${hash}`,
@@ -91,40 +91,90 @@ function hashPassword(password, parameters) {
   });
 }
 
-createServer((req, res) => {  
-  if (req.url === "/") res.end(readFileSync("./index.html"));
-  else if (req.url === "/inscription" && req.method === "POST") {
-    let data = "";
-    
-    req.on("data", chunk => data += chunk).on("end", () => {
-      const params = new URLSearchParams(data), email = params.get("email"), password = params.get("password");
+/**
+ * @param {string} password 
+ * @param {string} hash 
+ * @returns {Promise<boolean>}
+ */
+function verifyPassword(password, hash) {  
+  return new Promise((resolve, reject) => {
+    hashPassword(password, Object.fromEntries(hash.split("$").map(v => v.split("="))).nonce)
+      .then(passwordHash => resolve(hash === passwordHash))
+      .catch(reason => reject(reason));
+  });
+}
 
-      if (!email || !password)
-        return res.writeHead(400, { "content-type": "text/plain; charset=utf8" }).end("Mot de passe ou email vide");
+createServer((req, res) => {
+  let data = "";
 
-      if (getUserByEmailReq.get(email)) return res.writeHead(400, { "content-type": "text/plain; charset=utf8" }).end("Email déjà utilisée");
+  switch (req.url) {
+    case "/":
+      res.end(readFileSync("./index.html"));
+      break;
+    case "/inscription":
+      if (req.method === "POST") req.on("data", chunk => data += chunk).on("end", () => {
+        const params = new URLSearchParams(data), email = params.get("email"), password = params.get("password");
 
-      const isValidPwd = checkPasswordCNIL(password);
+        if (!email || !password)
+          return res.writeHead(400, { "content-type": "text/plain; charset=utf8" }).end("Mot de passe ou email vide");
 
-      if (isValidPwd !== true) return res.writeHead(400, { "content-type": "text/plain; charset=utf8" }).end(isValidPwd); 
+        if (getUserByEmailReq.get(email))
+          return res.writeHead(400, { "content-type": "text/plain; charset=utf8" }).end("Email déjà utilisée");
 
-      hashPassword(password, {parallelism: 2, tagLength: 64, memory: 65536, passes: 3})
-        .then(hash => {
-          try {
-            createUserReq.run(email, hash);
+        const isValidPwd = checkPasswordCNIL(password);
 
-            return res.writeHead(200, { "content-type": "text/plain; charset=utf8" }).end("Compte créé")
-          } catch (error) {
-            console.error(error);
+        if (isValidPwd !== true) return res.writeHead(400, { "content-type": "text/plain; charset=utf8" }).end(isValidPwd); 
+
+        hashPassword(password)
+          .then(hash => {
+            try {
+              createUserReq.run(email, hash);
+
+              return res.writeHead(200, { "content-type": "text/plain; charset=utf8" }).end("Compte créé")
+            } catch (error) {
+              console.error(error);
+        
+              return res.writeHead(500, { "content-type": "text/plain; charset=utf8" }).end("Erreur lors de la création du compte")
+            }
+          })
+          .catch(reason => {
+            console.error(reason);
         
             return res.writeHead(500, { "content-type": "text/plain; charset=utf8" }).end("Erreur lors de la création du compte")
-          }
-        })
-        .catch(reason => {
-          console.error(reason);
+          })
+      });
+      else res.end();
+      break;
+    case "/connexion":
+      if (req.method === "POST") req.on("data", chunk => data += chunk).on("end", () => {
+        const params = new URLSearchParams(data), email = params.get("email"), password = params.get("password");
+
+        if (!email || !password)
+          return res.writeHead(400, { "content-type": "text/plain; charset=utf8" }).end("Mot de passe ou email vide");
+
+        const user = getUserByEmailReq.get(email);
+
+        if (user === undefined)
+          return res.writeHead(400, { "content-type": "text/plain; charset=utf8" }).end("Email invalide");
+
+        verifyPassword(password, user.password)
+          .then(equal => {
+            res
+              .writeHead(200, { "content-type": "text/plain; charset=utf8" })
+              .end(equal ? "Vous êtes connecter" : "Identifiants invalides")
+          })
+          .catch(reason => {
+            console.error(reason);
         
-          return res.writeHead(500, { "content-type": "text/plain; charset=utf8" }).end("Erreur lors de la création du compte")
-        })
-    })
-  } else res.end();
+            return res
+              .writeHead(500, { "content-type": "text/plain; charset=utf8" })
+              .end("Erreur lors de la vérification des identifiants")
+          });
+      });
+      else res.end();
+      break;
+    default:
+      res.end();
+      break;
+  }
 }).listen(8080, () => console.log("http://localhost:8080"));
