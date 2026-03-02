@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="fr">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -15,12 +15,30 @@
     <button type="submit">S'inscrire</button>
   </form>
   <p>Connexion :</p>
-  <form action="/connexion" method="post">
+  <form action="/connexion" method="post" id="login">
     <label for="email">Email</label>
     <input type="email" name="email" id="email">
     <label for="password">Mot de passe</label>
     <input type="password" name="password" id="password">
     <button type="submit">Se connecter</button>
   </form>
+  <p id="res"></p>
+  <script>
+    const loginForm = document.getElementById("login"),
+      resEl = document.getElementById("res");
+
+    if (loginForm instanceof HTMLFormElement) loginForm.addEventListener("submit", e => {
+      e.preventDefault();
+
+      const data = new FormData(loginForm),
+        email = data.get("email"),
+        password = data.get("password");
+
+      fetch("http://localhost:8080/connexion", {method: "POST", body: `email=${email}&password=${password}`}).then(async res => {
+        if (res.status === 200) resEl.textContent = `Vous êtes connecté: ${await res.text()}`
+        else resEl.textContent = "Erreur lors de la connexion"
+      })
+    })
+  </script>
 </body>
 </html>
