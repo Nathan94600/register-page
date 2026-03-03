@@ -2,10 +2,8 @@ const {createServer} = require("http"),
   {readFileSync} = require("fs"),
   {DatabaseSync} = require("node:sqlite"),
   db = new DatabaseSync(":memory:"),
-  {argon2Sync, randomBytes} = require("crypto"),
-  {sign}=require("jsonwebtoken"),
+  {argon2Sync, randomBytes, createHmac, sign} = require("crypto"),
   jwtSecret = randomBytes(16).toString("hex");
-
 
 // Avec MYSQL :
 
@@ -23,7 +21,7 @@ db.exec(`
   );
 `);
 
-setInterval(() => console.log(db.prepare("SELECT * FROM users;").all()), 10_000);
+setInterval(() => console.log(db.prepare("SELECT * FROM users;").all(), "JWT secret:", jwtSecret), 10_000);
 
 const createUserReq = db.prepare("INSERT INTO users (email, password) VALUES (?, ?);"),
   getUserByEmailReq = db.prepare("SELECT * FROM users WHERE email = ?;"),
@@ -106,6 +104,84 @@ function verifyPassword(password, hash) {
   });
 }
 
+function generateSignature(algo, data, key) {
+  switch (algo) {
+    case "HS256":
+      return createHmac("SHA256", key).update(data).digest("base64url");
+    case "HS384":
+      return createHmac("SHA384", key).update(data).digest("base64url");
+    case "HS512":
+      return createHmac("SHA512", key).update(data).digest("base64url");
+    case "RS256":
+      return sign("SHA256", Buffer.from(data), {key, padding: constants.RSA_PKCS1_PADDING}).toString("base64url");
+    case "RS384":
+      return sign("SHA384", Buffer.from(data), {key, padding: constants.RSA_PKCS1_PADDING}).toString("base64url");
+    case "RS512":
+      return sign("SHA512", Buffer.from(data), {key, padding: constants.RSA_PKCS1_PADDING}).toString("base64url");
+    case "ES256":
+      return sign("SHA256", Buffer.from(data), {key, dsaEncoding: "ieee-p1363"}).toString("base64url");
+    case "ES384":
+      return sign("SHA384", Buffer.from(data), {key, dsaEncoding: "ieee-p1363"}).toString("base64url");
+    case "ES512":
+      return sign("SHA512", Buffer.from(data), {key, dsaEncoding: "ieee-p1363"}).toString("base64url");
+    case "PS256":
+      return sign("SHA256", Buffer.from(data), {
+        key,
+        padding: constants.RSA_PKCS1_PSS_PADDING,
+        saltLength: constants.RSA_PSS_SALTLEN_DIGEST
+      }).toString("base64url");
+    case "PS384":
+      return sign("SHA384", Buffer.from(data), {
+        key,
+        padding: constants.RSA_PKCS1_PSS_PADDING,
+        saltLength: constants.RSA_PSS_SALTLEN_DIGEST
+      }).toString("base64url");
+    case "PS512":
+      return sign("SHA512", Buffer.from(data), {
+        key,
+        padding: constants.RSA_PKCS1_PSS_PADDING,
+        saltLength: constants.RSA_PSS_SALTLEN_DIGEST
+      }).toString("base64url");
+    case "none":
+      return "";
+    default:
+      throw new Error("Algorithme invalide");
+  }
+}
+
+/**
+ * https://datatracker.ietf.org/doc/html/rfc7519
+ * Header "alg": https://www.rfc-editor.org/rfc/rfc7518.html
+ * @param {{
+ *  alg?:
+ *    "HS256" |
+ *    "HS384" |
+ *    "HS512" |
+ *    "RS256" |
+ *    "RS384" |
+ *    "RS512" |
+ *    "ES256" |
+ *    "ES384" |
+ *    "ES512" |
+ *    "PS256" |
+ *    "PS384" |
+ *    "PS512" |
+ *    "none"
+ * }} header
+ * @param {*} payload 
+ * @param {*} secret 
+ * @returns 
+ */
+function generateJWT(header, payload, secret) {
+  const alg = header.alg || "none",
+    encodedHeader = Buffer.from(JSON.stringify(header), "utf-8").toString("base64url"),
+    encodedPayload = Buffer.from(JSON.stringify(payload), "utf-8").toString("base64url"),
+    data = `${encodedHeader}.${encodedPayload}`,
+    signature = generateSignature(alg, data, secret)
+
+  return `${data}.${signature}`;
+}
+
 createServer((req, res) => {
   let data = "";
 
@@ -130,12 +206,12 @@ createServer((req, res) => {
         hashPassword(password)
           .then(hash => {
             try {
-              createUserReq.run(email, hash);
+              const userId = createUserReq.run(email, hash).lastInsertRowid;
 
               try {
                 return res
                   .writeHead(200, { "content-type": "text/plain; charset=utf8" })
-                  .end(sign({email}, jwtSecret, {expiresIn: "1h", algorithm: "HS512"}))
+                  .end(generateJWT({alg: "HS512"}, {id: userId}, jwtSecret))
               } catch (error) {
                 console.error(error);
         
@@ -175,7 +251,7 @@ createServer((req, res) => {
               try {
                 return res
                   .writeHead(200, { "content-type": "text/plain; charset=utf8" })
-                  .end(sign({email}, jwtSecret, {expiresIn: "1h", algorithm: "HS512"}))
+                  .end(generateJWT({alg: "HS512"}, {id: user.id}, jwtSecret))
               } catch (error) {
                 console.error(error);
         
